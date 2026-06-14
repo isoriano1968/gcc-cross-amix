@@ -240,6 +240,14 @@ sysroot:
 	if test -d "$(AMIX_ROOT)/usr/sys"; then cp -R "$(AMIX_ROOT)/usr/sys" "$(SYSROOT)/usr/"; fi
 	if test -d "$(AMIX_ROOT)/usr/ccs"; then cp -R "$(AMIX_ROOT)/usr/ccs" "$(SYSROOT)/usr/"; fi
 	if test -d "$(AMIX_USR_LIB)"; then mkdir -p "$(SYSROOT)/usr/lib"; cp -R "$(AMIX_USR_LIB)"/. "$(SYSROOT)/usr/lib/"; fi
+	@for f in libc.so.1 ld.so.1; do \
+		if test -f "$(AMIX_USR_LIB)/$$f"; then \
+			tmp="$(SYSROOT)/usr/lib/.$$f.tmp"; \
+			cp "$(AMIX_USR_LIB)/$$f" "$$tmp"; \
+			test -s "$$tmp"; \
+			mv "$$tmp" "$(SYSROOT)/usr/lib/$$f"; \
+		fi; \
+	done
 
 validate-sysroot: sysroot
 	@missing=0; \
@@ -253,6 +261,9 @@ validate-sysroot: sysroot
 		usr/ccs/lib/crtn.o; do \
 		if test ! -f "$(SYSROOT)/$$f"; then \
 			echo "Missing $(SYSROOT)/$$f"; \
+			missing=1; \
+		elif test ! -s "$(SYSROOT)/$$f"; then \
+			echo "Empty or truncated $(SYSROOT)/$$f"; \
 			missing=1; \
 		fi; \
 	done; \
