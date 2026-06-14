@@ -23,6 +23,7 @@ trap cleanup EXIT INT TERM
 fix_asm()
 {
 	perl -pi -e 's/^(\s*\.lcomm\s+[^,]+,[^,]+),\d+\s*$/$1\n/' "$1"
+	perl -pi -e 's/^(\s*cmp\.[bwl]\s+)([^,\n]+),([^\n]+)$/$1$3,$2/' "$1"
 }
 
 compile_one()
