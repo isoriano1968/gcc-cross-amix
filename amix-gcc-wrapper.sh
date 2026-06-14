@@ -23,7 +23,26 @@ trap cleanup EXIT INT TERM
 fix_asm()
 {
 	perl -pi -e 's/^(\s*\.lcomm\s+[^,]+,[^,]+),\d+\s*$/$1\n/' "$1"
-	perl -pi -e 's/^(\s*cmp\.[bwl]\s+)([^,\n]+),([^\n]+)$/$1$3,$2/' "$1"
+	perl -0pi -e '
+		sub split_operands {
+			my ($s) = @_;
+			my $depth = 0;
+			for (my $i = 0; $i < length($s); $i++) {
+				my $ch = substr($s, $i, 1);
+				$depth++ if $ch eq "(";
+				$depth-- if $ch eq ")";
+				if ($ch eq "," && $depth == 0) {
+					return (substr($s, 0, $i), substr($s, $i + 1));
+				}
+			}
+			return;
+		}
+		s{^(\s*cmp\.[bwl]\s+)([^\n]+)$}{
+			my ($prefix, $ops) = ($1, $2);
+			my ($left, $right) = split_operands($ops);
+			defined $right ? "$prefix$right,$left" : "$prefix$ops";
+		}egm;
+	' "$1"
 }
 
 compile_one()
