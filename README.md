@@ -127,17 +127,6 @@ configure tests and sources expect pre-C99 implicit `int` behavior.
 `BINUTILS_DISABLE_DIRS` is empty by default now. GNU `ld` must build for the
 toolchain to become self-contained.
 
-## Repository Check
-
-Before publishing, run:
-
-```sh
-make github-safety-check
-```
-
-The public repo contains the build scripts, patches, wrapper, and
-documentation. AMIX sysroot files are supplied locally by the user.
-
 ## AMIX Runtime Files
 
 Linux-side linking needs the AMIX startup objects in addition to `libc.so.1`
@@ -199,32 +188,6 @@ ELF 32-bit MSB relocatable M68000 Version 1
 
 Then copy `build/test/random.o` to the Amiga and try the native AMIX link, or
 continue toward `test-hello` for Linux-side executable linking.
-
-## Creating A Public Repository
-
-Public repo contents:
-
-```text
-Makefile
-README.md
-amix-gcc-wrapper.sh
-.gitignore
-```
-
-Example workflow:
-
-```sh
-mkdir amix-cross-public
-cp tools/amix-cross/Makefile tools/amix-cross/README.md \
-   tools/amix-cross/amix-gcc-wrapper.sh tools/amix-cross/.gitignore \
-   amix-cross-public/
-cd amix-cross-public
-git init
-git status --short
-```
-
-Review `git status` before the first commit. Do not include an AMIX `usr`
-tree, sysroot, copied libraries, or startup objects.
 
 ## Source URLs
 
