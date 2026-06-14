@@ -177,6 +177,42 @@ Example:
 make AMIX_ROOT=$HOME/src/usr-amix CPUFLAGS=-m68030 test-random
 ```
 
+## AMIX Makefiles
+
+Old AMIX Makefiles often hardcode native tools in recipes:
+
+```make
+exp: $(OBJ)
+	ld -r -o exp $(OBJ)
+```
+
+For cross builds, use make variables so the caller can inject the toolchain:
+
+```make
+CC ?= cc
+LD ?= ld
+AR ?= ar
+
+exp: $(OBJ)
+	$(LD) -r -o exp $(OBJ)
+```
+
+Then build from Linux with:
+
+```sh
+PATH=$HOME/opt/amix-cross/bin:$PATH \
+CC=m68k-cbm-sysv4-gcc \
+LD=m68k-cbm-sysv4-ld \
+AR=m68k-cbm-sysv4-ar \
+make
+```
+
+Kernel and driver builds also need the old AMIX compiler dialect flags:
+
+```make
+CFLAGS += -traditional -fno-builtin -Dinline=__inline__
+```
+
 ## Expected First Test
 
 After `make test-random`, the output object should resemble the native AMIX
