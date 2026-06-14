@@ -1,0 +1,17 @@
+/build/
+/src/
+/distfiles/
+/sysroot/
+
+# User-supplied AMIX material. Do not redistribute.
+/usr/
+**/sysroot/
+**/usr/ccs/
+**/usr/include/
+**/usr/lib/
+**/libc.so.1
+**/ld.so.1
+**/crt*.o
+**/mcrt*.o
+**/pcrt*.o
+**/values-X*.o
