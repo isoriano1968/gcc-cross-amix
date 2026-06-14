@@ -135,8 +135,21 @@ while test $# -gt 0; do
 	esac
 done
 
+for input in "${sources[@]}" "${objects[@]}"; do
+	if test -n "$input" && test "$out" = "$input"; then
+		echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
+		exit 1
+	fi
+done
+
 if test "$has_c" = yes; then
 	if test "${#sources[@]}" -eq 0; then
+		for input in "${objects[@]}"; do
+			if test -n "$input" && test "$compile_out" = "$input"; then
+				echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
+				exit 1
+			fi
+		done
 		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" -o "$compile_out" "${objects[@]}"
 	fi
 	if test "${#sources[@]}" -gt 1 && test -n "$compile_out"; then
