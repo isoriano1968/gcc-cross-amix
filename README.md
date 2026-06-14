@@ -33,9 +33,6 @@ usr/ccs/lib/mcrt*.o
 usr/ccs/lib/pcrt*.o
 ```
 
-The included `.gitignore` files are intentionally conservative, but they are
-not a substitute for checking what you publish.
-
 ## Quick Start On LMDE
 
 First copy or mount your AMIX tree on Linux. The examples below assume:
@@ -130,17 +127,16 @@ configure tests and sources expect pre-C99 implicit `int` behavior.
 `BINUTILS_DISABLE_DIRS` is empty by default now. GNU `ld` must build for the
 toolchain to become self-contained.
 
-## Safety Checks
+## Repository Check
 
-Before publishing a new GitHub repository, run:
+Before publishing, run:
 
 ```sh
 make github-safety-check
 ```
 
-The public repo should contain only the build scripts, patches, wrapper, and
-documentation. The user's AMIX sysroot belongs outside the repository or under
-ignored generated directories.
+The public repo contains the build scripts, patches, wrapper, and
+documentation. AMIX sysroot files are supplied locally by the user.
 
 ## AMIX Runtime Files
 
@@ -182,8 +178,7 @@ The installed wrapper supports the normal C path once the sysroot contains
 m68k-cbm-sysv4-gcc hello.c -o hello
 ```
 
-Only after a C hello binary links and runs on AMIX should `gcc-full` / C++ be
-treated as meaningful.
+Build and test a C hello binary on AMIX before working on `gcc-full` / C++.
 
 ## Kernel And Driver Objects
 
@@ -207,7 +202,7 @@ continue toward `test-hello` for Linux-side executable linking.
 
 ## Creating A Public Repository
 
-Recommended public repo contents:
+Public repo contents:
 
 ```text
 Makefile
@@ -216,7 +211,7 @@ amix-gcc-wrapper.sh
 .gitignore
 ```
 
-Recommended workflow:
+Example workflow:
 
 ```sh
 mkdir amix-cross-public
@@ -228,8 +223,8 @@ git init
 git status --short
 ```
 
-Review `git status` before the first commit. There should be no AMIX `usr`
-tree, no sysroot, no copied libraries, and no startup objects.
+Review `git status` before the first commit. Do not include an AMIX `usr`
+tree, sysroot, copied libraries, or startup objects.
 
 ## Source URLs
 
