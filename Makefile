@@ -283,16 +283,16 @@ sysroot:
 	mkdir -p $(SYSROOT)/usr
 	chmod -R u+w $(SYSROOT)/usr
 	test -d "$(AMIX_ROOT)/usr/include"
-	cp -R "$(AMIX_ROOT)/usr/include" "$(SYSROOT)/usr/"
-	if test -d "$(AMIX_ROOT)/usr/sys"; then cp -R "$(AMIX_ROOT)/usr/sys" "$(SYSROOT)/usr/"; fi
-	if test -d "$(AMIX_ROOT)/usr/ccs"; then cp -R "$(AMIX_ROOT)/usr/ccs" "$(SYSROOT)/usr/"; fi
-	if test -d "$(AMIX_USR_LIB)"; then mkdir -p "$(SYSROOT)/usr/lib"; cp -R "$(AMIX_USR_LIB)"/. "$(SYSROOT)/usr/lib/"; fi
+	cp -Rf "$(AMIX_ROOT)/usr/include" "$(SYSROOT)/usr/"
+	if test -d "$(AMIX_ROOT)/usr/sys"; then cp -Rf "$(AMIX_ROOT)/usr/sys" "$(SYSROOT)/usr/"; fi
+	if test -d "$(AMIX_ROOT)/usr/ccs"; then cp -Rf "$(AMIX_ROOT)/usr/ccs" "$(SYSROOT)/usr/"; fi
+	if test -d "$(AMIX_USR_LIB)"; then mkdir -p "$(SYSROOT)/usr/lib"; cp -Rf "$(AMIX_USR_LIB)"/. "$(SYSROOT)/usr/lib/" || true; fi
 	@for f in libc.so.1 ld.so.1; do \
 		if test -f "$(AMIX_USR_LIB)/$$f"; then \
 			tmp="$(SYSROOT)/usr/lib/.$$f.tmp"; \
-			cp "$(AMIX_USR_LIB)/$$f" "$$tmp"; \
+			cp -f "$(AMIX_USR_LIB)/$$f" "$$tmp"; \
 			test -s "$$tmp"; \
-			mv "$$tmp" "$(SYSROOT)/usr/lib/$$f"; \
+			mv -f "$$tmp" "$(SYSROOT)/usr/lib/$$f"; \
 		fi; \
 	done
 	@for d in include sys ccs; do \
