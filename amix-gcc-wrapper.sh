@@ -264,6 +264,19 @@ compile_one()
 	"$as" "$asarch" -o "$obj" "$asmfile"
 }
 
+assemble_one()
+{
+	local src="$1"
+	local obj="$2"
+
+	# Unlike compile_one, this handles hand-written .s sources directly, not
+	# GCC-generated assembly. fix_asm's cmp operand swap is a workaround for
+	# a GCC-specific codegen quirk and must not be applied here: hand-written
+	# files already use correct operand order, and swapping them turns valid
+	# instructions into invalid ones.
+	"$as" -m68020 -o "$obj" "$src"
+}
+
 # fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
 # form over an absolute path.  ld records a shared library in DT_NEEDED under
 # the name it was GIVEN, unless the library carries a DT_SONAME of its own.  On
@@ -361,6 +374,7 @@ fi
 
 compile_flags=()
 sources=()
+asm_sources=()
 objects=()
 archives=()
 ld_flags=()
@@ -394,7 +408,7 @@ while test $# -gt 0; do
 				*) compile_flags+=("$arg" "$next") ;;
 			esac
 			;;
-		-I*|-D*|-U*|-O*|-m*|-f*|-W*|-g|-traditional)
+		-I*|-D*|-U*|-O*|-m*|-f*|-W*|-g|-traditional*)
 			compile_flags+=("$arg")
 			;;
 		# fix (linking): gcc's -d<LETTERS> dump options (-dM, -dD, ...) belong
@@ -414,6 +428,9 @@ while test $# -gt 0; do
 			;;
 		*.c)
 			sources+=("$arg")
+			;;
+		*.s)
+			asm_sources+=("$arg")
 			;;
 		*.o)
 			objects+=("$arg")
@@ -441,7 +458,7 @@ while test $# -gt 0; do
 	esac
 done
 
-for input in "${sources[@]}" "${objects[@]}" "${archives[@]}"; do
+for input in "${sources[@]}" "${asm_sources[@]}" "${objects[@]}" "${archives[@]}"; do
 	if test -n "$input" && test "$out" = "$input"; then
 		echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
 		exit 1
@@ -449,7 +466,7 @@ for input in "${sources[@]}" "${objects[@]}" "${archives[@]}"; do
 done
 
 if test "$has_c" = yes; then
-	if test "${#sources[@]}" -eq 0; then
+	if test "${#sources[@]}" -eq 0 && test "${#asm_sources[@]}" -eq 0; then
 		# -c with no *.c source.  Everything the parse loop filed as an
 		# "object" -- .s, .S, .i, or any other input the wrapper does not
 		# compile itself -- is handed to the real driver, which knows how
@@ -500,7 +517,7 @@ if test "$has_c" = yes; then
 		fi
 		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "${compile_out_args[@]}" "${objects[@]}"
 	fi
-	if test "${#sources[@]}" -gt 1 && test -n "$compile_out"; then
+	if test $(( ${#sources[@]} + ${#asm_sources[@]} )) -gt 1 && test -n "$compile_out"; then
 		echo "amix gcc wrapper: -o with -c and multiple sources is not supported" >&2
 		exit 1
 	fi
@@ -522,11 +539,15 @@ if test "$has_c" = yes; then
 	# both halves.)
 	for src in "${sources[@]}"; do
 		obj="$compile_out"
-		test -n "$obj" || {
-			obj="$(basename "$src")"
-			obj="${obj%.*}.o"
-		}
+		# like gcc: "-c dir/foo.c" writes foo.o in the current directory
+		test -n "$obj" || obj="$(basename "${src%.*}").o"
 		compile_one "$src" "$obj" "${compile_flags[@]}"
+	done
+	for src in "${asm_sources[@]}"; do
+		obj="$compile_out"
+		# like gcc: "-c dir/foo.s" writes foo.o in the current directory
+		test -n "$obj" || obj="$(basename "${src%.*}").o"
+		assemble_one "$src" "$obj"
 	done
 	exit 0
 fi
@@ -535,6 +556,13 @@ for src in "${sources[@]}"; do
 	obj="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.o")"
 	tmpfiles+=("$obj")
 	compile_one "$src" "$obj" "${compile_flags[@]}"
+	objects+=("$obj")
+done
+
+for src in "${asm_sources[@]}"; do
+	obj="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.o")"
+	tmpfiles+=("$obj")
+	assemble_one "$src" "$obj"
 	objects+=("$obj")
 done
 
