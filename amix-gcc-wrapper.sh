@@ -233,6 +233,42 @@ compile_one()
 	"$as" "$asarch" -o "$obj" "$asmfile"
 }
 
+# fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
+# form over an absolute path.  ld records a shared library in DT_NEEDED under
+# the name it was GIVEN, unless the library carries a DT_SONAME of its own.  On
+# this target only libc.so.1 and ld.so.1 have a SONAME: libsocket.so, libnsl.so
+# and every stock libX*.so have none.  So resolving "-lsocket" to a file in the
+# build HOST's sysroot and passing that path positionally, as this function used
+# to, baked the host path into the executable --
+#
+#   NEEDED  [/home/<user>/opt/amix-cross/m68k-cbm-sysv4/sysroot/usr/lib/libsocket.so]
+#
+# a path that exists on no AMIX box.  Nothing complained: the link succeeded and
+# the binary looked correct; it died at exec time on the guest, where the
+# runtime linker has only the recorded string to go on.  Passing "-L<dir>"
+# followed by "-lNAME" makes ld search for the file itself, and for a library
+# found that way it records just the file name ("libsocket.so"), which is what
+# the guest's /usr/lib holds.  (binutils 2.8.1 predates "-l:libNAME.so", so the
+# search form is the only way to get a bare name recorded.)
+#
+# Two libraries still have to be named by path, and both are safe:
+#
+#   libc      the sysroot ships "libc.so.1", not "libc.so", so ld's -l search
+#             cannot find it at all.  It is also the one library with a
+#             DT_SONAME, so the recorded name is "/usr/lib/libc.so.1" from the
+#             SONAME rather than the host path.  (Routing libc through -lc
+#             instead would find the static stub archive in /usr/ccs/lib and the
+#             executable would silently lose its libc dependency.)
+#   libNAME.so.1
+#             a versioned DSO with no unversioned name, same search problem.
+#             Nothing but libc is shaped like this in the stock sysroot; if one
+#             appears, the previous behaviour is kept.
+#
+# The lookup order below is unchanged, and matches ld's own: the -L directories
+# in command-line order, then the sysroot default, and within each directory the
+# shared library before the archive.  So "-lNAME" resolves to exactly the file
+# this function inspected, provided the same -L list reaches ld -- which is what
+# ld_lib_dirs below is for.  ("make test-dtneeded" gates this.)
 resolve_lib()
 {
 	local name="$1"
@@ -244,12 +280,18 @@ resolve_lib()
 	}
 
 	for dir in "${lib_dirs[@]}" "${default_lib_dirs[@]}"; do
-		for candidate in "$dir/lib$name.so" "$dir/lib$name.so.1" "$dir/lib$name.a"; do
-			test -f "$candidate" && {
-				printf '%s\n' "$candidate"
-				return 0
-			}
-		done
+		test -f "$dir/lib$name.so" && {
+			printf '%s\n' "-l$name"
+			return 0
+		}
+		test -f "$dir/lib$name.so.1" && {
+			printf '%s\n' "$dir/lib$name.so.1"
+			return 0
+		}
+		test -f "$dir/lib$name.a" && {
+			printf '%s\n' "-l$name"
+			return 0
+		}
 	done
 
 	printf 'amix gcc wrapper: cannot resolve -l%s\n' "$name" >&2
@@ -467,6 +509,18 @@ for cand in "$prefix"/lib/gcc-lib/"$target"/*/libgcc.a; do
 	test -f "$cand" && libgcc_a="$cand"
 done
 
+# fix (linking): hand ld the library search path.  The -L directories used to be
+# consumed by the wrapper alone, for resolve_lib's own lookup, and never reached
+# ld -- which was invisible while every -l was turned into an absolute path.  Now
+# that resolve_lib emits "-lNAME", ld has to be able to find the same files, in
+# the same order: the user's -L directories first, then the sysroot default.
+# These also give ld the search path it needs for a shared library's own
+# dependencies.
+ld_lib_dirs=()
+for dir in "${lib_dirs[@]}" "${default_lib_dirs[@]}"; do
+	ld_lib_dirs+=(-L"$dir")
+done
+
 resolved_libs=()
 for lib in "${libs[@]}"; do
 	# -lgcc is satisfied by the libgcc.a appended to the link below.
@@ -497,6 +551,6 @@ done
 exec "$ld" -o "$out" \
 	"$crt_dir/crt1.o" "$crt_dir/crti.o" \
 	"${objects[@]}" "${archives[@]}" "${ld_flags[@]}" \
-	"${resolved_libs[@]}" \
+	"${ld_lib_dirs[@]}" "${resolved_libs[@]}" \
 	${libgcc_a:+"$libgcc_a"} \
 	"$crt_dir/crtn.o"

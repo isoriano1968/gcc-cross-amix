@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -120,6 +120,7 @@ help:
 	@echo "  make test-bitfield   Bit-field offset/width survive as extension-word bits 10:6 and 4:0"
 	@echo "  make test-uint64     64-bit / % >> link, helpers resolved from libgcc.a"
 	@echo "  make test-objdir     '-c' with no '-o' writes ./basename.o, not beside the source"
+	@echo "  make test-dtneeded   DT_NEEDED names resolve on the guest, not on the build host"
 	@echo ""
 	@echo "Useful overrides:"
 	@echo "  make PREFIX=/opt/amix-cross"
@@ -879,6 +880,75 @@ test-objdir: install-gcc-wrapper env
 		echo "  FAIL the .S input was assembled without preprocessing"; status=1; \
 	fi; \
 	test $$status -eq 0 && echo "test-objdir PASS: -c writes ./basename.o for .c/.s/.S, sources untouched, -o unchanged"
+
+# Regression test for the DT_NEEDED entries a dynamic link records (see
+# resolve_lib in amix-gcc-wrapper.sh).  Only libc.so.1 carries a DT_SONAME on
+# this target; libsocket.so, libnsl.so and the stock libX*.so have none.  For a
+# SONAME-less shared object ld records the name it was GIVEN, so handing it an
+# absolute path -- as the wrapper used to, having resolved every -lNAME to a
+# file in the build host's sysroot -- baked that host path into the executable:
+#
+#   NEEDED  [/home/<user>/opt/amix-cross/m68k-cbm-sysv4/sysroot/usr/lib/libsocket.so]
+#
+# which exists on no AMIX box.  The link succeeded, the binary looked fine, and
+# it died at exec time on the guest.  The wrapper now passes -L<dir> -lNAME, so
+# ld records the bare "libsocket.so" that the guest's /usr/lib actually holds.
+#
+# This target links a program against -lsocket -lnsl and reads the dynamic
+# section.  It requires, at once:
+#   (a) no NEEDED entry mentioning the build host's sysroot (the defect);
+#   (b) "libsocket.so" and "libnsl.so" present under their bare names, so the
+#       libraries are still linked and not merely dropped; and
+#   (c) "/usr/lib/libc.so.1" still present -- libc is the one library named by
+#       path on purpose, because its DT_SONAME is what ld records.
+# (c) is the half a careless fix breaks: routing libc through -lc as well would
+# make ld pick up the static stub archive in /usr/ccs/lib and the executable
+# would lose its libc dependency entirely.
+#
+# The test program defines select/syslog/seteuid itself.  Those are BSD entry
+# points that libsocket.so imports but the stock shared libc.so.1 does not
+# export (it has _abi_select and friends; the plain names live in the static
+# /usr/ccs/lib stubs), so without them the link stops on libsocket.so's own
+# undefined references.  That gap is a property of the AMIX sysroot, not of the
+# wrapper, and stubbing it here keeps this gate about DT_NEEDED alone.
+#
+# Failure mode against the PRE-FIX wrapper (proof this test bites): check (a)
+# reports two NEEDED entries carrying the absolute sysroot path.
+test-dtneeded: install-gcc-wrapper env check-runtime
+	mkdir -p $(BUILDDIR)/test
+	printf '%s\n' \
+		'/* Pulls in two SONAME-less shared libraries from the AMIX sysroot. */' \
+		'extern int socket();' \
+		'extern int t_open();' \
+		'/* BSD entry points libsocket.so imports; absent from the shared libc. */' \
+		'int select(void)  { return -1; }' \
+		'int syslog(void)  { return 0; }' \
+		'int seteuid(void) { return -1; }' \
+		'int main(void) { return socket(2, 1, 0) + t_open(); }' \
+		> $(BUILDDIR)/test/dtneeded.c
+	$(TARGET_CC) $(CPUFLAGS) -o $(BUILDDIR)/test/dtneeded $(BUILDDIR)/test/dtneeded.c -lsocket -lnsl
+	@set -e; status=0; \
+	needed="$$($(PREFIX)/bin/$(TARGET)-objdump -p $(BUILDDIR)/test/dtneeded \
+		| sed -n 's/^[ \t]*NEEDED[ \t]*//p')"; \
+	echo "NEEDED entries:"; printf '%s\n' "$$needed" | sed 's/^/  /'; \
+	if printf '%s\n' "$$needed" | grep -Fq '$(SYSROOT)'; then \
+		echo "  FAIL a NEEDED entry carries the build host's sysroot path"; status=1; \
+	else \
+		echo "  ok   no NEEDED entry carries the build host's sysroot path"; \
+	fi; \
+	for lib in libsocket.so libnsl.so; do \
+		if printf '%s\n' "$$needed" | grep -qx "$$lib"; then \
+			echo "  ok   $$lib recorded under its bare name"; \
+		else \
+			echo "  FAIL $$lib is not recorded as a bare name"; status=1; \
+		fi; \
+	done; \
+	if printf '%s\n' "$$needed" | grep -qx '/usr/lib/libc.so.1'; then \
+		echo "  ok   /usr/lib/libc.so.1 still recorded from its DT_SONAME"; \
+	else \
+		echo "  FAIL the libc.so.1 dependency is gone"; status=1; \
+	fi; \
+	test $$status -eq 0 && echo "test-dtneeded PASS: guest-resolvable names only, libc SONAME intact"
 
 clean:
 	rm -rf $(BUILDDIR)

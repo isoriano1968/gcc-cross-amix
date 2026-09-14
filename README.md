@@ -135,6 +135,18 @@ The wrapper also handles the cases a real build runs into:
 - The installed `libgcc.a` is appended to every link, so the soft-arithmetic
   helpers (`__udivdi3`, `__umoddi3`, `__lshrdi3`, the DImode/float conversions)
   resolve without an explicit `-lgcc`.
+- `-lNAME` reaches `ld` as `-L<dir> -lNAME`, so the dependency recorded in the
+  executable is a name the **guest** can resolve. `ld` records a shared library
+  in `DT_NEEDED` under the name it was given unless the library has its own
+  `DT_SONAME`, and on this target only `libc.so.1` and `ld.so.1` have one --
+  `libsocket.so`, `libnsl.so` and every stock `libX*.so` have none. The wrapper
+  used to resolve each `-l` to a file in the build host's sysroot and pass that
+  path, so the executable carried
+  `NEEDED [/home/<user>/opt/amix-cross/.../usr/lib/libsocket.so]`, a path that
+  exists on no AMIX box. The link succeeded and the binary looked correct; it
+  died at exec time on the guest. `libc` is still named by path on purpose: the
+  sysroot ships `libc.so.1` rather than `libc.so`, so `-lc` could not find it,
+  and its `DT_SONAME` is what gets recorded anyway.
 - `-c` with no `-o` writes the object into the **current working directory**
   under the input's basename: `m68k-cbm-sysv4-gcc -c ../src/foo.c` produces
   `./foo.o`, and so does `-c ../src/foo.s`. An explicit `-o` is honoured
@@ -245,12 +257,16 @@ make test-objdir     -c with no -o writes ./basename.o into the working
                      directory and leaves the source directory clean, for
                      .c, .s and .S alike, while an explicit -o is still
                      honoured verbatim
+make test-dtneeded   a program linked against -lsocket -lnsl records bare
+                     library names, no build-host path, and still depends
+                     on /usr/lib/libc.so.1
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
 with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
-needs nothing but the wrapper. `test-uint64` links, so like `test-hello` it
-needs the AMIX crt objects and `libc.so.1` in the sysroot.
+needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
+`test-hello` they need the AMIX crt objects and `libc.so.1` in the sysroot;
+`test-dtneeded` additionally needs `libsocket.so` and `libnsl.so` there.
 
 ## Important Variables
 
