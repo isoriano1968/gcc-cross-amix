@@ -276,6 +276,13 @@ needs nothing but the wrapper. `test-uint64` and `test-dtneeded` link, so like
 `test-kernel-volatile` needs the AMIX headers (`AMIX_ROOT`), and
 `test-user-volatile` needs them in the sysroot (`SYSROOT`); see below.
 
+The gates test an installed toolchain, so run `make all` first. They reinstall
+only the wrapper script (`make refresh-gcc-wrapper`), so an edit to
+`amix-gcc-wrapper.sh` is picked up, but they never reconfigure gcc or reinstall
+binutils, which would replace the `ar`/`ranlib` wrappers from
+`make install-target-ar`. `test-uint64` still rebuilds and reinstalls
+`libgcc.a`, and `test-dtneeded` still runs the `sysroot` copy.
+
 ## Important Variables
 
 ```sh

@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -111,6 +111,7 @@ help:
 	@echo "  make test-random     Cross-compile usr/sys/amiga/driver/random.c"
 	@echo "  make test-hello      Try to build and link a runnable AMIX user program"
 	@echo "  make env             Write env.sh only"
+	@echo "  make refresh-gcc-wrapper Reinstall only the wrapper script (the test gates use this)"
 	@echo "  make print-vars      Show the selected versions and paths"
 	@echo ""
 	@echo "Regression gates (each checks the emitted encoding, not just that it assembled):"
@@ -371,9 +372,21 @@ gcc-full: $(GCC_BUILD)/config.status check-runtime
 		MAKEINFO="$(AMIX_MAKEINFO)" \
 		$(GCC_FULL_BUILD_TARGETS)
 
-install-gcc-wrapper: install-gcc
+define install_gcc_wrapper
 	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-gcc-wrapper.sh > $(PREFIX)/bin/$(TARGET)-gcc
 	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc
+endef
+
+install-gcc-wrapper: install-gcc
+	$(install_gcc_wrapper)
+
+# Reinstall only the wrapper script over an already installed compiler.  The
+# test targets use this instead of install-gcc-wrapper, whose install-gcc chain
+# reconfigures gcc and reinstalls binutils (which replaces the ar/ranlib
+# wrappers from install-target-ar) on every run.
+refresh-gcc-wrapper:
+	@test -x "$(GCC_REAL)" || { echo "Missing $(GCC_REAL); run 'make all' first"; exit 1; }
+	$(install_gcc_wrapper)
 
 # Replace the fortify-aborting binutils 2.8.1 ar/ranlib with thin wrappers that
 # delegate to the host ar/ranlib (see amix-ar-wrapper.sh for the rationale).
@@ -444,7 +457,7 @@ env:
 	@printf '%s\n' 'export AMIX_USER_CFLAGS="$(AMIX_USER_CFLAGS)"' >> $(BUILDDIR)/env.sh
 	@echo "Wrote $(BUILDDIR)/env.sh"
 
-test-random: install-gcc-wrapper env
+test-random: refresh-gcc-wrapper env
 	mkdir -p $(BUILDDIR)/test
 	$(TARGET_CC) -S $(AMIX_KERNEL_CFLAGS) \
 		-o $(BUILDDIR)/test/random.s \
@@ -497,7 +510,7 @@ test-uint64: install-libgcc env
 # ops assemble to the 64-bit "divsl"/"divul" form, so the "no broken form" check
 # below fails; at -O0 the divides do too, so the "correct form present" check
 # also fails.  A pass therefore requires the fixup to be installed.
-test-divmod: install-gcc-wrapper env
+test-divmod: refresh-gcc-wrapper env
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' \
 		'/* Variable-divisor signed+unsigned % and / force gcc to emit the' \
@@ -553,7 +566,7 @@ test-divmod: install-gcc-wrapper env
 # which is exactly why cross-building C that divides or multiplies "float"
 # previously needed a -Dfloat=double workaround.  A too-greedy rewrite that also
 # hit the memory/data-register forms fails check (b) instead.
-test-float: install-gcc-wrapper env
+test-float: refresh-gcc-wrapper env
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' \
 		'/* Single-precision multiply/divide in three operand shapes.' \
@@ -631,7 +644,7 @@ test-float: install-gcc-wrapper env
 # test bites): rm_* fail to assemble with the "operands mismatch" above, and the
 # rr_* pair assemble cleanly but report the fcmp destination as the fadd result
 # rather than the fmul result -- a MISMATCH line and a non-zero exit.
-test-fcmp: install-gcc-wrapper env
+test-fcmp: refresh-gcc-wrapper env
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' \
 		'/* Every comparison puts a MULTIPLY result on the left of ">", so a' \
@@ -699,7 +712,7 @@ test-fcmp: install-gcc-wrapper env
 #   Error: Missing operand
 #   Error: operands mismatch -- statement `bfffo %d0{' ignored
 # while the two controls assemble cleanly.
-test-bitfield: install-gcc-wrapper env
+test-bitfield: refresh-gcc-wrapper env
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' \
 		'/* Hand-written Motorola-syntax bit-field inline asm, "{#offset:#width}".' \
@@ -820,7 +833,7 @@ test-bitfield: install-gcc-wrapper env
 # and, because the source is by then an ELF object, the explicit-o compile of
 # that same file fails too.  The .S case loses only the object: there the file
 # the assembler clobbers is gcc's own preprocessed temporary, not the input.
-test-objdir: install-gcc-wrapper env
+test-objdir: refresh-gcc-wrapper env
 	rm -rf $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src $(BUILDDIR)/test/objdir-pristine
 	mkdir -p $(BUILDDIR)/test/objdir $(BUILDDIR)/test/objdir-src $(BUILDDIR)/test/objdir-pristine
 	printf '%s\n' \
@@ -918,7 +931,7 @@ test-objdir: install-gcc-wrapper env
 #
 # Failure mode against the PRE-FIX wrapper (proof this test bites): check (a)
 # reports two NEEDED entries carrying the absolute sysroot path.
-test-dtneeded: install-gcc-wrapper env check-runtime
+test-dtneeded: refresh-gcc-wrapper env check-runtime
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' \
 		'/* Pulls in two SONAME-less shared libraries from the AMIX sysroot. */' \
@@ -978,7 +991,7 @@ test-dtneeded: install-gcc-wrapper env check-runtime
 #   make test-kernel-volatile AMIX_KERNEL_CFLAGS='-O -traditional -fno-builtin \
 #     -Dinline=__inline__ $(CPUFLAGS) $(AMIX_KERNEL_CPPFLAGS) $(AMIX_KERNEL_INCLUDES)'
 # Needs the AMIX headers: point AMIX_ROOT at a tree with usr/include/sys.
-test-kernel-volatile: install-gcc-wrapper
+test-kernel-volatile: refresh-gcc-wrapper
 	mkdir -p $(BUILDDIR)/test
 	@test -f $(AMIX_ROOT)/usr/include/sys/inline.h || \
 		{ echo "test-kernel-volatile: no usr/include/sys/inline.h under AMIX_ROOT=$(AMIX_ROOT)"; exit 1; }
@@ -1052,7 +1065,7 @@ test-kernel-volatile: install-gcc-wrapper
 # "tstl %d0", and the table is nm type d.  Reproduce with
 #   make test-user-volatile AMIX_USER_CFLAGS='-O -traditional -fno-builtin \
 #     $(CPUFLAGS) -I$(SYSROOT)/usr/include'
-test-user-volatile: install-gcc-wrapper
+test-user-volatile: refresh-gcc-wrapper
 	mkdir -p $(BUILDDIR)/test
 	@test -f $(SYSROOT)/usr/include/sys/types.h || \
 		{ echo "test-user-volatile: no usr/include/sys/types.h under SYSROOT=$(SYSROOT)"; exit 1; }
