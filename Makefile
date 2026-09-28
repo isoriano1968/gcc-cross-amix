@@ -91,7 +91,7 @@ LIBGCC2_FUNCS := _muldi3 _divdi3 _moddi3 _udivdi3 _umoddi3 _negdi2 \
 	_floatdidf _floatdisf _floatdixf _fixunsdfdi _fixdfdi _fixunssfdi \
 	__gcc_bcmp _clear_cache _shtab _trampoline
 
-.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
+.PHONY: all help deps-hint deps download extract binutils install-binutils sysroot validate-sysroot check-runtime github-safety-check sysroot-check gcc install-gcc gcc-full install-gcc-wrapper refresh-gcc-wrapper install-target-ar libgcc install-libgcc env test-random test-hello test-uint64 test-divmod test-float test-fcmp test-bitfield test-objdir test-dtneeded test-kernel-volatile test-user-volatile print-vars clean distclean
 
 all: install-binutils sysroot install-gcc install-gcc-wrapper install-target-ar install-libgcc env
 
@@ -274,8 +274,14 @@ install-binutils: binutils
 		CFLAGS="$(HOST_CFLAGS)" \
 		MAKEINFO="$(AMIX_MAKEINFO)"
 
+# The stock files copied into the sysroot are made read-only once copied, so
+# a stray link step (for example an ld option that takes the next argument as
+# a map-file name) cannot overwrite libc.so.1 or a header in place.  Directories
+# stay writable so extra libraries can still be added.  Regenerating lifts the
+# write protection first, because cp cannot overwrite a read-only file.
 sysroot:
 	mkdir -p $(SYSROOT)/usr
+	chmod -R u+w $(SYSROOT)/usr
 	test -d "$(AMIX_ROOT)/usr/include"
 	cp -R "$(AMIX_ROOT)/usr/include" "$(SYSROOT)/usr/"
 	if test -d "$(AMIX_ROOT)/usr/sys"; then cp -R "$(AMIX_ROOT)/usr/sys" "$(SYSROOT)/usr/"; fi
@@ -289,6 +295,28 @@ sysroot:
 			mv "$$tmp" "$(SYSROOT)/usr/lib/$$f"; \
 		fi; \
 	done
+	@for d in include sys ccs; do \
+		if test -d "$(AMIX_ROOT)/usr/$$d"; then \
+			(cd "$(AMIX_ROOT)/usr" && find "$$d" -type f) | \
+				while read -r f; do chmod a-w "$(SYSROOT)/usr/$$f"; done; \
+		fi; \
+	done
+	@if test -d "$(AMIX_USR_LIB)"; then \
+		(cd "$(AMIX_USR_LIB)" && find . -type f) | \
+			while read -r f; do chmod a-w "$(SYSROOT)/usr/lib/$$f"; done; \
+	fi
+	@echo "Stock sysroot files are now read-only"
+
+# Refuse to run when the sysroot libc is not an ELF shared object: a clobbered
+# libc.so.1 makes every dynamic link fail with "file format not recognized".
+# The ELF type at offset 16 must be ET_DYN (big-endian 0x0003).
+sysroot-check:
+	@f="$(SYSROOT)/usr/lib/libc.so.1"; \
+	magic=$$(od -An -tx1 -N18 "$$f" 2>/dev/null | tr -d ' \n'); \
+	case "$$magic" in \
+		7f454c46*0003) echo "ok   $$f is an ELF shared object" ;; \
+		*) echo "ERROR: $$f is not an ELF shared object; run make sysroot" >&2; exit 1 ;; \
+	esac
 
 validate-sysroot: sysroot
 	@missing=0; \
@@ -384,7 +412,7 @@ install-gcc-wrapper: install-gcc
 # test targets use this instead of install-gcc-wrapper, whose install-gcc chain
 # reconfigures gcc and reinstalls binutils (which replaces the ar/ranlib
 # wrappers from install-target-ar) on every run.
-refresh-gcc-wrapper:
+refresh-gcc-wrapper: sysroot-check
 	@test -x "$(GCC_REAL)" || { echo "Missing $(GCC_REAL); run 'make all' first"; exit 1; }
 	$(install_gcc_wrapper)
 
@@ -455,6 +483,7 @@ env:
 	@printf '%s\n' 'export AMIX_CRT_DIR="$(AMIX_CRT_DIR)"' >> $(BUILDDIR)/env.sh
 	@printf '%s\n' 'export AMIX_KERNEL_CFLAGS="$(AMIX_KERNEL_CFLAGS)"' >> $(BUILDDIR)/env.sh
 	@printf '%s\n' 'export AMIX_USER_CFLAGS="$(AMIX_USER_CFLAGS)"' >> $(BUILDDIR)/env.sh
+	@printf '%s\n' 'case "$$(od -An -tx1 -N18 "$$AMIX_SYSROOT/usr/lib/libc.so.1" 2>/dev/null | tr -d " \\n")" in 7f454c46*0003) ;; *) echo "env.sh: $$AMIX_SYSROOT/usr/lib/libc.so.1 is not an ELF shared object; run make sysroot" >&2; return 1 2>/dev/null || exit 1 ;; esac' >> $(BUILDDIR)/env.sh
 	@echo "Wrote $(BUILDDIR)/env.sh"
 
 test-random: refresh-gcc-wrapper env
@@ -467,7 +496,7 @@ test-random: refresh-gcc-wrapper env
 	file $(BUILDDIR)/test/random.o
 	$(PREFIX)/bin/$(TARGET)-nm -a $(BUILDDIR)/test/random.o | head
 
-test-hello: all check-runtime
+test-hello: all check-runtime sysroot-check
 	mkdir -p $(BUILDDIR)/test
 	printf '%s\n' '#include <stdio.h>' 'int main(void) { puts("hello from AMIX cross"); return 0; }' > $(BUILDDIR)/test/hello.c
 	AMIX_SYSROOT="$(SYSROOT)" AMIX_CRT_DIR="$(AMIX_CRT_DIR)" $(TARGET_CC) $(CPUFLAGS) -o $(BUILDDIR)/test/hello $(BUILDDIR)/test/hello.c

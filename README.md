@@ -283,6 +283,12 @@ binutils, which would replace the `ar`/`ranlib` wrappers from
 `make install-target-ar`. `test-uint64` still rebuilds and reinstalls
 `libgcc.a`, and `test-dtneeded` still runs the `sysroot` copy.
 
+Every gate first runs `make sysroot-check`, which fails unless
+`$SYSROOT/usr/lib/libc.so.1` is an ELF shared object; the generated `env.sh`
+makes the same check when sourced. `make sysroot` leaves the stock files it
+copies read-only (directories stay writable for added libraries) and lifts
+that protection itself when it runs again.
+
 ## Important Variables
 
 ```sh

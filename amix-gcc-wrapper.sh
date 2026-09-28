@@ -366,6 +366,15 @@ while test $# -gt 0; do
 		-I*|-D*|-U*|-O*|-m*|-f*|-W*|-g|-traditional)
 			compile_flags+=("$arg")
 			;;
+		# fix (linking): gcc's -d<LETTERS> dump options (-dM, -dD, ...) belong
+		# to the compiler.  Filed as ld flags they reached ld right before an
+		# argument naming a sysroot file, and ld read "-dM" as a map request
+		# taking that next argument as the map file name: "cc -E -dM foo.c"
+		# with a wrapper lacking -E support overwrote the sysroot libc.so.1
+		# with a linker map.  Lower-case -dn/-dy/-dc/-dp stay ld options.
+		-d[A-Z]*)
+			compile_flags+=("$arg")
+			;;
 		-L*)
 			lib_dirs+=("${arg#-L}")
 			;;
