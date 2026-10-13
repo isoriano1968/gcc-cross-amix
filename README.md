@@ -135,6 +135,36 @@ The wrapper also handles the cases a real build runs into:
 - The installed `libgcc.a` is appended to every link, so the soft-arithmetic
   helpers (`__udivdi3`, `__umoddi3`, `__lshrdi3`, the DImode/float conversions)
   resolve without an explicit `-lgcc`.
+- `-c` with no `-o` writes the object into the **current working directory**
+  under the input's basename: `m68k-cbm-sysv4-gcc -c ../src/foo.c` produces
+  `./foo.o`, and so does `-c ../src/foo.s`. An explicit `-o` is honoured
+  verbatim, including a path into another directory.
+
+  This is a change in behaviour for **any compile whose source is not in the
+  directory `make` was run from** -- the discriminator is the working directory
+  versus the source's own directory, not whether the build uses a separate
+  object directory. A non-recursive top-level `Makefile` compiling `sub/foo.c`
+  is affected exactly as a VPATH build is; only a compile whose source is in
+  the working directory is unchanged, because there the two locations coincide.
+
+  For `.c` sources the wrapper used to keep the directory part and write
+  `../src/foo.o`, next to the source. That broke every build compiling from
+  elsewhere -- gcc's own build, imake/X11, any autoconf package configured from
+  a separate build tree, and any Makefile naming its sources `sub/foo.c`. The
+  compile still reported success, so the failure surfaced at the link as
+  `ld: cannot open foo.o: No such file or directory`, with stray objects left
+  behind in the source tree.
+
+  For `.s`/`.S` inputs the same missing `-o` was worse, because those are
+  passed to the real compiler rather than assembled by the wrapper: it forwarded
+  an *empty* `-o`, which `gcc 2.7.2.3` drops from the command line it builds, so
+  the assembler ran as `as -V -Qy -o ../src/foo.s` -- the file that should have
+  been the input became the output. In a non-interactive build `as` then read an
+  empty stdin, produced no `.o` anywhere and exited 0; on a terminal the compile
+  hung. For a `.s` input the clobbered file is the assembly source itself, so
+  the build **replaced its own source with an object**; for `.S` it is gcc's
+  preprocessed temporary, so only the object is lost. A plain `.s.o:` suffix
+  rule triggered this on every file it touched.
 
 ### Using autoconf
 
@@ -211,11 +241,16 @@ make test-bitfield   bit-field offset and width survive as extension-word
                      bits 10:6 and 4:0, register-select bits clear (rule 4)
 make test-uint64     64-bit / % and >> link, with __udivdi3 __umoddi3
                      __lshrdi3 resolved from the installed libgcc.a
+make test-objdir     -c with no -o writes ./basename.o into the working
+                     directory and leaves the source directory clean, for
+                     .c, .s and .S alike, while an explicit -o is still
+                     honoured verbatim
 ```
 
 The first four compile with `-c` at both `-O0` and `-O` and inspect the object
-with `objdump`, so they need only the installed wrapper. `test-uint64` links, so
-like `test-hello` it needs the AMIX crt objects and `libc.so.1` in the sysroot.
+with `objdump`, so they need only the installed wrapper; `test-objdir` likewise
+needs nothing but the wrapper. `test-uint64` links, so like `test-hello` it
+needs the AMIX crt objects and `libc.so.1` in the sysroot.
 
 ## Important Variables
 
