@@ -33,6 +33,22 @@ fix_asm()
 	# contents-fsck: validate_rest's switch misdispatched on the box.)
 	perl -pi -e 's/^(\s*)\.swbeg\s+&(\d+)[ \t]*$/$1.long $2/' "$1"
 
+	# With -fpic, gcc's SGS m68k config names the string-constant labels
+	# "LC%N" (the non-PIC path uses ".LCN"), for both the definition
+	# ("LC%0:") and the GOT references ("LC%0@GOT(%a5)"). GNU as reads the
+	# "%" as its modulo operator and rejects every such line ("Unknown
+	# operator -- statement `lc%0:' ignored"), so no PIC object - and no
+	# shared library - could be assembled. Rename them to the non-PIC
+	# spelling; they are file-local either way.
+	perl -pi -e 's/\bLC%(\d+)\b/.LC$1/g' "$1"
+
+	# PIC calls come out as "bsr foo@PLTPC" with no size. The native SGS
+	# assembler makes that a 32-bit branch; GNU as picks the 16-bit form
+	# (R_68K_PLT16), and any shared library over 32 KB then fails to link
+	# with "relocation truncated to fit: R_68K_PLT16". Ask for the 68020
+	# long form explicitly (R_68K_PLT32).
+	perl -pi -e 's/^(\s*)(bsr|bra|jbsr|jra)\s+(\S+\@PLTPC)\s*$/$1$2.l $3\n/' "$1"
+
 	# gcc's SGS output spells the 68020 32-bit/32-bit divide-with-
 	# remainder as "tdivs.l <ea>,%dR:%dQ" / "tdivu.l ..." (remainder in
 	# dR, quotient in dQ).  These SGS mnemonics are produced by
