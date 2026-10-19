@@ -264,6 +264,42 @@ compile_one()
 	"$as" "$asarch" -o "$obj" "$asmfile"
 }
 
+# fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
+# form over an absolute path.  ld records a shared library in DT_NEEDED under
+# the name it was GIVEN, unless the library carries a DT_SONAME of its own.  On
+# this target only libc.so.1 and ld.so.1 have a SONAME: libsocket.so, libnsl.so
+# and every stock libX*.so have none.  So resolving "-lsocket" to a file in the
+# build HOST's sysroot and passing that path positionally, as this function used
+# to, baked the host path into the executable --
+#
+#   NEEDED  [/home/<user>/opt/amix-cross/m68k-cbm-sysv4/sysroot/usr/lib/libsocket.so]
+#
+# a path that exists on no AMIX box.  Nothing complained: the link succeeded and
+# the binary looked correct; it died at exec time on the guest, where the
+# runtime linker has only the recorded string to go on.  Passing "-L<dir>"
+# followed by "-lNAME" makes ld search for the file itself, and for a library
+# found that way it records just the file name ("libsocket.so"), which is what
+# the guest's /usr/lib holds.  (binutils 2.8.1 predates "-l:libNAME.so", so the
+# search form is the only way to get a bare name recorded.)
+#
+# Two libraries still have to be named by path, and both are safe:
+#
+#   libc      the sysroot ships "libc.so.1", not "libc.so", so ld's -l search
+#             cannot find it at all.  It is also the one library with a
+#             DT_SONAME, so the recorded name is "/usr/lib/libc.so.1" from the
+#             SONAME rather than the host path.  (Routing libc through -lc
+#             instead would find the static stub archive in /usr/ccs/lib and the
+#             executable would silently lose its libc dependency.)
+#   libNAME.so.1
+#             a versioned DSO with no unversioned name, same search problem.
+#             Nothing but libc is shaped like this in the stock sysroot; if one
+#             appears, the previous behaviour is kept.
+#
+# The lookup order below is unchanged, and matches ld's own: the -L directories
+# in command-line order, then the sysroot default, and within each directory the
+# shared library before the archive.  So "-lNAME" resolves to exactly the file
+# this function inspected, provided the same -L list reaches ld -- which is what
+# ld_lib_dirs below is for.  ("make test-dtneeded" gates this.)
 resolve_lib()
 {
 	local name="$1"
@@ -275,12 +311,18 @@ resolve_lib()
 	}
 
 	for dir in "${lib_dirs[@]}" "${default_lib_dirs[@]}"; do
-		for candidate in "$dir/lib$name.so" "$dir/lib$name.so.1" "$dir/lib$name.a"; do
-			test -f "$candidate" && {
-				printf '%s\n' "$candidate"
-				return 0
-			}
-		done
+		test -f "$dir/lib$name.so" && {
+			printf '%s\n' "-l$name"
+			return 0
+		}
+		test -f "$dir/lib$name.so.1" && {
+			printf '%s\n' "$dir/lib$name.so.1"
+			return 0
+		}
+		test -f "$dir/lib$name.a" && {
+			printf '%s\n' "-l$name"
+			return 0
+		}
 	done
 
 	printf 'amix gcc wrapper: cannot resolve -l%s\n' "$name" >&2
@@ -355,6 +397,15 @@ while test $# -gt 0; do
 		-I*|-D*|-U*|-O*|-m*|-f*|-W*|-g|-traditional)
 			compile_flags+=("$arg")
 			;;
+		# fix (linking): gcc's -d<LETTERS> dump options (-dM, -dD, ...) belong
+		# to the compiler.  Filed as ld flags they reached ld right before an
+		# argument naming a sysroot file, and ld read "-dM" as a map request
+		# taking that next argument as the map file name: "cc -E -dM foo.c"
+		# with a wrapper lacking -E support overwrote the sysroot libc.so.1
+		# with a linker map.  Lower-case -dn/-dy/-dc/-dp stay ld options.
+		-d[A-Z]*)
+			compile_flags+=("$arg")
+			;;
 		-L*)
 			lib_dirs+=("${arg#-L}")
 			;;
@@ -399,22 +450,82 @@ done
 
 if test "$has_c" = yes; then
 	if test "${#sources[@]}" -eq 0; then
-		for input in "${objects[@]}"; do
-			if test -n "$input" && test "$compile_out" = "$input"; then
-				echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
-				exit 1
-			fi
-		done
-		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" -o "$compile_out" "${objects[@]}"
+		# -c with no *.c source.  Everything the parse loop filed as an
+		# "object" -- .s, .S, .i, or any other input the wrapper does not
+		# compile itself -- is handed to the real driver, which knows how
+		# to assemble or compile each of them.
+		#
+		# fix (compiling): pass -o only when one was actually given.  This
+		# used to pass "-o $compile_out" unconditionally, so a plain
+		# "cc -c foo.s" reached the real compiler as "-c -o '' foo.s".
+		# gcc 2.7.2.3 splices its spec strings argument by argument and an
+		# EMPTY argument disappears from the command line it builds, so
+		# the assembler was run as
+		#
+		#     as -V -Qy -o ../src/probe.s
+		#
+		# -- the source had become the -o ARGUMENT and as read its input
+		# from stdin.  The consequences are worse than a missing object:
+		# with stdin at EOF (any non-interactive build) as wrote an empty
+		# module OVER THE ASSEMBLY SOURCE and exited 0, so the .s file was
+		# replaced by an ELF object, nothing appeared in the working
+		# directory, and nothing was printed; on a terminal the compile
+		# simply hung waiting for input that never came.  The ordinary
+		# SVR4-era way to build assembly,
+		#
+		#     .s.o:
+		#             $(CC) $(CFLAGS) -c $<
+		#
+		# hits this on every .s file it touches.  (For a .S input the file
+		# the assembler clobbers is gcc's own preprocessed temporary, not
+		# the source, so that case merely loses the object.)
+		#
+		# With -o left off, the real driver applies its own -c rule, which
+		# is the same rule the *.c path below implements by hand: one
+		# object per input, in the CURRENT WORKING DIRECTORY, named after
+		# the input's basename -- "cc -c ../src/foo.s" writes "./foo.o"
+		# and leaves ../src alone.  That covers .s, .S and .i alike, and
+		# multiple inputs in one command, without this branch having to
+		# reimplement the naming.  An explicit -o is still passed through
+		# verbatim.  ("make test-objdir" gates .c, .s and .S.)
+		compile_out_args=()
+		if test -n "$compile_out"; then
+			for input in "${objects[@]}"; do
+				if test -n "$input" && test "$compile_out" = "$input"; then
+					echo "amix gcc wrapper: refusing to overwrite input file '$input'" >&2
+					exit 1
+				fi
+			done
+			compile_out_args=(-o "$compile_out")
+		fi
+		exec "$real" "${common_cflags[@]}" -c "${compile_flags[@]}" "${compile_out_args[@]}" "${objects[@]}"
 	fi
 	if test "${#sources[@]}" -gt 1 && test -n "$compile_out"; then
 		echo "amix gcc wrapper: -o with -c and multiple sources is not supported" >&2
 		exit 1
 	fi
+	# fix (compiling): with -c and no -o, the object belongs in the CURRENT
+	# WORKING DIRECTORY under the source's basename -- "cc -c ../src/foo.c"
+	# writes "./foo.o".  This used to strip only the suffix and keep the
+	# directory part, so the object was written NEXT TO THE SOURCE, in
+	# ../src/foo.o.  Every build with a separate object directory then failed
+	# at the link: the compile reported success, the object was nowhere make
+	# expected it, and ld stopped with "cannot open foo.o: No such file or
+	# directory".  That is the normal shape of a VPATH/srcdir build -- gcc's
+	# own build (which compiles ../gcc-src/*.c into the build directory),
+	# imake/X11, and any autoconf package configured from a separate build
+	# tree -- so it was not an exotic case.  Worse, the stray objects landed
+	# in the source tree, where a second build could pick them up.
+	#
+	# With an explicit -o nothing changes: $compile_out is used verbatim,
+	# including a path into another directory.  ("make test-objdir" gates
+	# both halves.)
 	for src in "${sources[@]}"; do
 		obj="$compile_out"
-		# like gcc: "-c dir/foo.c" writes foo.o in the current directory
-		test -n "$obj" || obj="$(basename "${src%.*}").o"
+		test -n "$obj" || {
+			obj="$(basename "$src")"
+			obj="${obj%.*}.o"
+		}
 		compile_one "$src" "$obj" "${compile_flags[@]}"
 	done
 	exit 0
@@ -436,6 +547,18 @@ done
 libgcc_a=
 for cand in "$prefix"/lib/gcc-lib/"$target"/*/libgcc.a; do
 	test -f "$cand" && libgcc_a="$cand"
+done
+
+# fix (linking): hand ld the library search path.  The -L directories used to be
+# consumed by the wrapper alone, for resolve_lib's own lookup, and never reached
+# ld -- which was invisible while every -l was turned into an absolute path.  Now
+# that resolve_lib emits "-lNAME", ld has to be able to find the same files, in
+# the same order: the user's -L directories first, then the sysroot default.
+# These also give ld the search path it needs for a shared library's own
+# dependencies.
+ld_lib_dirs=()
+for dir in "${lib_dirs[@]}" "${default_lib_dirs[@]}"; do
+	ld_lib_dirs+=(-L"$dir")
 done
 
 resolved_libs=()
@@ -468,6 +591,6 @@ done
 exec "$ld" -o "$out" \
 	"$crt_dir/crt1.o" "$crt_dir/crti.o" \
 	"${objects[@]}" "${archives[@]}" "${ld_flags[@]}" \
-	"${resolved_libs[@]}" \
+	"${ld_lib_dirs[@]}" "${resolved_libs[@]}" \
 	${libgcc_a:+"$libgcc_a"} \
 	"$crt_dir/crtn.o"
