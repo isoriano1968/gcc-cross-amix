@@ -49,6 +49,21 @@ fix_asm()
 	# long form explicitly (R_68K_PLT32).
 	perl -pi -e 's/^(\s*)(bsr|bra|jbsr|jra)\s+(\S+\@PLTPC)\s*$/$1$2.l $3\n/' "$1"
 
+	# Opt-in (AMIX_RETURN_D0_TO_A0=1): the m68k SVR4 ABI returns integers
+	# in d0 and pointers in a0, and gcc's epilogue already copies a pointer
+	# result into d0 for callers that did not declare the function.  The
+	# reverse is not covered: code written for machines with one return
+	# register (XView, much of the X11 contrib world) defines functions as
+	# returning an integer type (Xv_opaque) and calls them through
+	# pointer-returning prototypes, so the caller reads a stale a0 - XView's
+	# cmdtool crashed on exactly that.  Copy d0 to a0 before every rts.
+	# Safe: a0 is a scratch register, and a pointer function reaches its rts
+	# with d0 == a0 already (gcc skips its a0->d0 copy only when they are
+	# equal), so only integer and void functions change.
+	if test -n "$AMIX_RETURN_D0_TO_A0"; then
+		perl -pi -e 's/^(\s*)rts\s*$/$1mov.l %d0,%a0\n$1rts\n/' "$1"
+	fi
+
 	# gcc's SGS output spells the 68020 32-bit/32-bit divide-with-
 	# remainder as "tdivs.l <ea>,%dR:%dQ" / "tdivu.l ..." (remainder in
 	# dR, quotient in dQ).  These SGS mnemonics are produced by
