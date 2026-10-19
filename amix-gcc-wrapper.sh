@@ -398,7 +398,8 @@ if test "$has_c" = yes; then
 	fi
 	for src in "${sources[@]}"; do
 		obj="$compile_out"
-		test -n "$obj" || obj="${src%.*}.o"
+		# like gcc: "-c dir/foo.c" writes foo.o in the current directory
+		test -n "$obj" || obj="$(basename "${src%.*}").o"
 		compile_one "$src" "$obj" "${compile_flags[@]}"
 	done
 	exit 0
